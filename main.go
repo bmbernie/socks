@@ -11,6 +11,7 @@ import (
 	"github.com/armon/go-socks5"
 	flag "github.com/ogier/pflag"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 var (
@@ -38,6 +39,23 @@ func init() {
 
 	flag.StringVar(&flagRemoteListener, "remote-listener", "",
 		"open the SOCKS port on the remote address (e.g. ssh://user:pass@host:port)")
+}
+
+func SSHAgent() ssh.AuthMethod {
+	if sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
+		return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers)
+	}
+	return nil
+}
+
+type keyboardInteractive map[string]string
+
+func (cr keyboardInteractive) Challenge(user string, instruction string, questions []string, echos []bool) ([]string, error) {
+	var answers []string
+	for _, q := range questions {
+		answers = append(answers, cr[q])
+	}
+	return answers, nil
 }
 
 func main() {
@@ -103,16 +121,17 @@ func main() {
 
 		listenHost = u.Host
 
-		// TODO: ssh key?
-		pass, havePass := u.User.Password()
-		if !havePass {
-			log.Fatalf("error: no password provided in remote listener", err)
-		}
+		// TODO: uber-hack atm find a better way, pass as cmd line argument
+		answers := keyboardInteractive(map[string]string{
+			"Verification code: ": "",
+		})
 
 		config := &ssh.ClientConfig{
 			User: u.User.Username(),
+			//User: "bmb",
 			Auth: []ssh.AuthMethod{
-				ssh.Password(pass),
+				SSHAgent(),
+				ssh.KeyboardInteractive(answers.Challenge),
 			},
 		}
 
